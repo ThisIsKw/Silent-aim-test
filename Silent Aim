@@ -1,0 +1,374 @@
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
+local Window = Fluent:CreateWindow({
+    Title = "SILENT AIM - MM2",
+    SubTitle = "by Gemini - Modificado",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(550, 400),
+    Acrylic = true,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+local Tabs = {
+    Main = Window:AddTab({ Title = "Silent Aim", Icon = "crosshair" })
+}
+
+-- Variáveis globais
+local silentAimAtivo = false
+local guardarArma = true
+local alvoAtual = nil
+local connection = nil
+
+-- Sistema de arrastar para o botão
+local dragging = false
+local dragInput, dragStart, startPos
+
+--// LÓGICA DO SILENT AIM ATUALIZADA
+local function PuxarArma()
+    local LocalPlayer = game:GetService("Players").LocalPlayer
+    local personagem = LocalPlayer.Character
+    local arma = nil
+    
+    -- Verifica se a arma já está na mão
+    if personagem and personagem:FindFirstChild("Gun") then
+        return personagem:FindFirstChild("Gun")
+    end
+    
+    -- Procura a arma no inventário
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if backpack then
+        arma = backpack:FindFirstChild("Gun")
+        if arma then
+            -- Simula equipar a arma
+            arma.Parent = personagem
+            task.wait(0.05) -- Pequena pausa para garantir que a arma foi equipada
+        end
+    end
+    
+    return arma
+end
+
+local function GuardarArma()
+    if not guardarArma then return end
+    
+    local LocalPlayer = game:GetService("Players").LocalPlayer
+    local personagem = LocalPlayer.Character
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    
+    if personagem and backpack then
+        local arma = personagem:FindFirstChild("Gun")
+        if arma then
+            arma.Parent = backpack
+        end
+    end
+end
+
+local function EncontrarMurderer()
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    
+    for _, v in pairs(Players:GetPlayers()) do
+        if v ~= LocalPlayer and v.Character then
+            -- Verifica se é o Murderer
+            if v.Character:FindFirstChild("Knife") or (v.Backpack and v.Backpack:FindFirstChild("Knife")) then
+                if v.Character:FindFirstChild("HumanoidRootPart") then
+                    return v.Character
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function AtirarSilentAim()
+    local LocalPlayer = game:GetService("Players").LocalPlayer
+    local personagem = LocalPlayer.Character
+    
+    if not personagem or not personagem:FindFirstChild("Head") then
+        return
+    end
+    
+    -- Encontra o Murderer
+    local murderChar = EncontrarMurderer()
+    if not murderChar or not murderChar:FindFirstChild("HumanoidRootPart") then
+        return
+    end
+    
+    -- Puxa a arma
+    local arma = PuxarArma()
+    if not arma then
+        Fluent:Notify({
+            Title = "Erro",
+            Content = "Arma não encontrada no inventário!",
+            Duration = 3
+        })
+        return
+    end
+    
+    local evento = arma:FindFirstChild("Shoot")
+    if not evento then
+        return
+    end
+    
+    -- Cálculo de predição melhorada
+    local alvo = murderChar.HumanoidRootPart
+    local alvoPos = alvo.Position + (alvo.Velocity * 0.18)
+    local minhaPos = personagem.Head.Position
+    
+    -- Ajuste de precisão
+    local direcao = CFrame.new(minhaPos, alvoPos)
+    local posicaoFinal = CFrame.new(alvoPos)
+    
+    -- Dispara rapidamente
+    evento:FireServer(direcao, posicaoFinal)
+    
+    -- Guarda a arma se configurado
+    GuardarArma()
+    
+    alvoAtual = murderChar.Name
+    return true
+end
+
+-- Loop principal do Silent Aim
+local function IniciarLoopSilentAim()
+    if connection then
+        connection:Disconnect()
+    end
+    
+    connection = game:GetService("RunService").Heartbeat:Connect(function()
+        if silentAimAtivo then
+            AtirarSilentAim()
+        end
+    end)
+end
+
+--// INTERFACE DA GUI
+Tabs.Main:AddParagraph({
+    Title = "Instruções",
+    Content = "Use o botão toggle ou a tecla para ativar/desativar o Silent Aim. O script puxa a arma automaticamente."
+})
+
+-- Botão Toggle com sistema de arrastar
+local toggleButton = nil
+
+-- Função para atualizar o texto do botão
+local function AtualizarTextoBotao()
+    if toggleButton then
+        local title = "Silent Aim: " .. (silentAimAtivo and "ATIVADO" or "DESATIVADO")
+        -- Não usamos SetTitle diretamente, criamos um novo botão se necessário
+        -- ou atualizamos de outra forma
+    end
+end
+
+-- Adiciona o botão toggle
+toggleButton = Tabs.Main:AddButton({
+    Title = "Silent Aim: DESATIVADO",
+    Description = "Clique para ativar/desativar | Arraste para mover",
+    Callback = function()
+        silentAimAtivo = not silentAimAtivo
+        
+        if silentAimAtivo then
+            toggleButton:SetTitle("Silent Aim: ATIVADO")
+            Fluent:Notify({
+                Title = "Silent Aim Ativado",
+                Content = "Atirando automaticamente no Murderer...",
+                Duration = 3
+            })
+            IniciarLoopSilentAim()
+        else
+            toggleButton:SetTitle("Silent Aim: DESATIVADO")
+            if connection then
+                connection:Disconnect()
+                connection = nil
+            end
+            Fluent:Notify({
+                Title = "Silent Aim Desativado",
+                Content = "Parou de atirar automaticamente.",
+                Duration = 3
+            })
+        end
+    end
+})
+
+-- Configuração do sistema de arrastar para o botão
+local buttonFrame = toggleButton.Button
+buttonFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = buttonFrame.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+buttonFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if dragging and (input == dragInput) then
+        local delta = input.Position - dragStart
+        buttonFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Keybind para PC (mantido da versão original)
+local Keybind = Tabs.Main:AddKeybind("SilentKeybind", {
+    Title = "Tecla para PC (Toggle)",
+    Mode = "Toggle",
+    Default = "Q",
+
+    Callback = function(Value)
+        silentAimAtivo = not silentAimAtivo
+        
+        if silentAimAtivo then
+            toggleButton:SetTitle("Silent Aim: ATIVADO")
+            Fluent:Notify({
+                Title = "Silent Aim Ativado",
+                Content = "Tecla " .. tostring(Keybind:GetValue()) .. " pressionada",
+                Duration = 2
+            })
+            IniciarLoopSilentAim()
+        else
+            toggleButton:SetTitle("Silent Aim: DESATIVADO")
+            if connection then
+                connection:Disconnect()
+                connection = nil
+            end
+            Fluent:Notify({
+                Title = "Silent Aim Desativado",
+                Content = "Tecla " .. tostring(Keybind:GetValue()) .. " pressionada novamente",
+                Duration = 2
+            })
+        end
+    end,
+
+    ChangedCallback = function(New)
+        Fluent:Notify({
+            Title = "Tecla Alterada",
+            Content = "Tecla do Silent Aim alterada para: " .. New,
+            Duration = 2
+        })
+    end
+})
+
+-- Opção para guardar arma
+Tabs.Main:AddToggle("GuardarArmaToggle", {
+    Title = "Guardar Arma Após Tiro",
+    Description = "Se desativado, mantém a arma na mão",
+    Default = guardarArma,
+    Callback = function(value)
+        guardarArma = value
+        Fluent:Notify({
+            Title = "Configuração Alterada",
+            Content = "Guardar arma: " .. (value and "SIM" or "NÃO"),
+            Duration = 2
+        })
+    end
+})
+
+-- Velocidade do tiro
+local velocidadeOptions = {"Muito Rápido", "Rápido", "Normal"}
+local velocidadeSelecionada = "Muito Rápido"
+
+Tabs.Main:AddDropdown("VelocidadeTiro", {
+    Title = "Velocidade do Tiro",
+    Description = "Escolha a velocidade dos disparos",
+    Values = velocidadeOptions,
+    Default = velocidadeSelecionada,
+    Multi = false,
+    Callback = function(value)
+        velocidadeSelecionada = value
+        
+        if connection then
+            connection:Disconnect()
+        end
+        
+        local intervalo
+        if value == "Muito Rápido" then
+            intervalo = 0.1
+        elseif value == "Rápido" then
+            intervalo = 0.3
+        else
+            intervalo = 0.5
+        end
+        
+        if silentAimAtivo then
+            connection = game:GetService("RunService").Heartbeat:Connect(function()
+                if silentAimAtivo then
+                    AtirarSilentAim()
+                    task.wait(intervalo)
+                end
+            end)
+        end
+        
+        Fluent:Notify({
+            Title = "Velocidade Alterada",
+            Content = "Velocidade: " .. value,
+            Duration = 2
+        })
+    end
+})
+
+-- Botão de tiro manual (mantido como opção)
+Tabs.Main:AddButton({
+    Title = "Atirar Agora (Manual)",
+    Description = "Executa um único tiro de teste",
+    Callback = function()
+        if AtirarSilentAim() then
+            Fluent:Notify({
+                Title = "Tiro Manual",
+                Content = "Tiro executado com sucesso",
+                Duration = 2
+            })
+        else
+            Fluent:Notify({
+                Title = "Erro",
+                Content = "Não foi possível atirar",
+                Duration = 3
+            })
+        end
+    end
+})
+
+-- Status do Silent Aim
+Tabs.Main:AddParagraph({
+    Title = "Status do Sistema",
+    Content = function()
+        local status = silentAimAtivo and "🟢 ATIVADO" or "🔴 DESATIVADO"
+        local guardarStatus = guardarArma and "SIM" or "NÃO"
+        local velocidadeStatus = velocidadeSelecionada
+        local alvoInfo = alvoAtual and "Último alvo: " .. alvoAtual or "Nenhum alvo encontrado"
+        
+        return string.format(
+            "Status: %s\n" ..
+            "Guardar Arma: %s\n" ..
+            "Velocidade: %s\n" ..
+            "%s",
+            status, guardarStatus, velocidadeStatus, alvoInfo
+        )
+    end
+})
+
+-- Separador visual
+Tabs.Main:AddParagraph({
+    Title = "Configurações",
+    Content = "Ajuste as opções abaixo:"
+})
+
+-- Notificação Inicial
+Fluent:Notify({
+    Title = "Silent Aim Modificado Carregado",
+    Content = "Use o botão ou tecla Q para ativar. Arraste o botão para mover!",
+    Duration = 5
+})
+
+Window:SelectTab(1)
